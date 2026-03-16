@@ -85,36 +85,55 @@ class ChainEngine:
 
     def _expand_neighbors(self, seed_indices: List[int],
                           memory_embs: np.ndarray,
-                          neighbors_per_seed: int = 2,
-                          min_similarity: float = 0.15) -> List[int]:
+                          neighbors_per_seed: int = 3,
+                          min_similarity: float = 0.15,
+                          hops: int = 2) -> List[int]:
         """
-        For each seed memory, find its nearest neighbors in embedding space.
-        Returns indices of NEW memories not in the seed set.
+        Multi-hop neighborhood expansion in embedding space.
+        For each seed, find nearest neighbors, then expand THOSE too.
 
-        This is the key insight: "Thai dinner" -> "shrimp paste" (sim 0.365)
-        even though "shrimp paste" is invisible to the query.
+        This is the key insight: "Thai dinner" → "shrimp paste" → "shellfish allergy"
+        Hop 1: Thai dinner finds shrimp paste (sim 0.365)
+        Hop 2: Shrimp paste finds shellfish allergy (sim 0.4+)
+
+        Args:
+            seed_indices: Starting memory indices from vector search
+            memory_embs: All memory embeddings
+            neighbors_per_seed: Neighbors to find per seed (default 3)
+            min_similarity: Minimum cosine similarity threshold
+            hops: Number of expansion hops (default 2 for multi-hop chains)
         """
-        seed_set = set(seed_indices)
-        neighbor_indices = []
+        all_neighbors = []
         seen = set(seed_indices)
+        current_frontier = list(seed_indices)
 
-        for idx in seed_indices:
-            sims = memory_embs @ memory_embs[idx]
-            sorted_js = np.argsort(sims)[::-1]
-            added = 0
-            for j in sorted_js:
-                j = int(j)
-                if j in seen:
-                    continue
-                if float(sims[j]) < min_similarity:
-                    break
-                neighbor_indices.append(j)
-                seen.add(j)
-                added += 1
-                if added >= neighbors_per_seed:
-                    break
+        for hop in range(hops):
+            next_frontier = []
+            # Reduce neighbors per seed on later hops to limit explosion
+            k = neighbors_per_seed if hop == 0 else max(1, neighbors_per_seed - 1)
 
-        return neighbor_indices
+            for idx in current_frontier:
+                sims = memory_embs @ memory_embs[idx]
+                sorted_js = np.argsort(sims)[::-1]
+                added = 0
+                for j in sorted_js:
+                    j = int(j)
+                    if j in seen:
+                        continue
+                    if float(sims[j]) < min_similarity:
+                        break
+                    all_neighbors.append(j)
+                    next_frontier.append(j)
+                    seen.add(j)
+                    added += 1
+                    if added >= k:
+                        break
+
+            current_frontier = next_frontier
+            if not current_frontier:
+                break
+
+        return all_neighbors
 
     def _llm_rerank(self, query: str, candidates: List[Dict],
                     top_k: int) -> List[Dict]:
@@ -127,30 +146,32 @@ class ChainEngine:
             for i, c in enumerate(candidates)
         )
 
-        prompt = f"""You are a memory relevance analyst. Given a query and stored memories, determine which are relevant — including INDIRECT relevance through reasoning chains.
+        prompt = f"""You are a memory relevance analyst. Given a query and candidate memories, score each for relevance — including INDIRECT relevance through reasoning chains.
 
 Query: "{query}"
 
-Candidate memories:
+Candidates:
 {candidate_list}
 
-For each memory, respond with a JSON array:
-[{{"index": 1, "score": 0.0-1.0, "reason": "brief explanation"}}]
+Return a JSON array scoring each candidate:
+[{{"index": 1, "score": 0.9, "reason": "why"}}]
 
-Score guidelines:
-- 1.0 = directly answers the query
-- 0.7-0.9 = indirectly relevant through a reasoning chain
+Scoring:
+- 1.0 = directly answers query
+- 0.7-0.9 = indirectly relevant via reasoning chain (e.g. Thai food → shrimp paste → shellfish allergy)
 - 0.3-0.6 = tangentially related
 - 0.0-0.2 = not relevant
 
-IMPORTANT: Look for multi-hop chains. If memory A connects to memory B which connects to the query, BOTH are relevant.
+CRITICAL: Find multi-hop chains. If memory A links to B which links to the query, BOTH are relevant. Score them 0.7+.
+Keep reasons under 15 words. Return ONLY valid JSON."""
 
-Respond with ONLY the JSON array."""
+        # Scale max tokens based on candidate count
+        max_tokens = min(4096, max(1500, len(candidates) * 80))
 
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1500,
+                max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}]
             )
 
@@ -180,8 +201,8 @@ Respond with ONLY the JSON array."""
 
     def find_connections(self, query: str, memories: List[str],
                          top_k: int = 5,
-                         vector_candidates: int = 10,
-                         neighbors_per_candidate: int = 2) -> Dict:
+                         vector_candidates: Optional[int] = None,
+                         neighbors_per_candidate: int = 3) -> Dict:
         """
         THE PRODUCT. One call, finds chain connections.
 
@@ -206,6 +227,19 @@ Respond with ONLY the JSON array."""
         if not memories:
             return {"connections": [], "chains_found": 0, "query": query,
                     "latency_ms": 0, "approx_tokens": 0}
+
+        # Scale vector candidates based on memory count
+        # More memories = need wider initial net to catch relevant clusters
+        if vector_candidates is None:
+            n = len(memories)
+            if n <= 10:
+                vector_candidates = min(n, 8)
+            elif n <= 50:
+                vector_candidates = min(n, 15)
+            elif n <= 200:
+                vector_candidates = min(n, 20)
+            else:
+                vector_candidates = min(n, 25)
 
         # 1. Embed everything
         all_texts = memories + [query]

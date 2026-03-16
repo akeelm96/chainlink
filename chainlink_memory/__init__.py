@@ -1,10 +1,10 @@
 """
-ChainLink — Find connections your vector search misses.
+ChainLink Memory — Find connections your vector search misses.
 
 Chain-aware memory for AI agents. One import, three methods.
 
 Quick start:
-    from chainlink import ChainLink
+    from chainlink_memory import ChainLink
 
     memory = ChainLink()
     memory.add("User loves Thai food")
@@ -15,7 +15,7 @@ Quick start:
     # Finds: Thai food -> shrimp paste -> shellfish allergy chain
 """
 
-from .sdk import ChainLink, QueryResult, Memory
+from chainlink_memory.sdk import ChainLink, QueryResult, Memory
 
 __version__ = "0.1.0"
 __all__ = ["ChainLink", "QueryResult", "Memory"]

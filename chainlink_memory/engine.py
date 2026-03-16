@@ -3,13 +3,13 @@ ChainLink — The Chain Reasoning Engine
 =======================================
 Finds implicit connections between memories that vector search misses.
 
-No PDE solver, no graph database. Just:
-1. Embed all memories
+Pipeline:
+1. Embed all memories using sentence-transformers
 2. Find candidates via vector similarity
 3. Expand candidates via neighborhood lookup
-4. LLM reasons about chains
+4. LLM reasons about chains between candidates
 
-That's it. 96.9% chain recall vs 68.8% for pure vector search.
+96.9% chain recall vs 68.8% for pure vector search.
 """
 
 import numpy as np
@@ -18,6 +18,9 @@ from dataclasses import dataclass
 import json
 import os
 import time
+import logging
+
+logger = logging.getLogger("chainlink_memory")
 
 
 @dataclass
@@ -60,6 +63,11 @@ class ChainEngine:
     @property
     def client(self):
         if self._client is None:
+            if not self._api_key:
+                raise ValueError(
+                    "No Anthropic API key provided. Pass api_key= or set "
+                    "ANTHROPIC_API_KEY environment variable."
+                )
             import anthropic
             self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client
@@ -83,8 +91,8 @@ class ChainEngine:
         For each seed memory, find its nearest neighbors in embedding space.
         Returns indices of NEW memories not in the seed set.
 
-        This is the key insight: \"Thai dinner\" → \"shrimp paste\" (sim 0.365)
-        even though \"shrimp paste\" is invisible to the query.
+        This is the key insight: "Thai dinner" -> "shrimp paste" (sim 0.365)
+        even though "shrimp paste" is invisible to the query.
         """
         seed_set = set(seed_indices)
         neighbor_indices = []
@@ -121,13 +129,13 @@ class ChainEngine:
 
         prompt = f"""You are a memory relevance analyst. Given a query and stored memories, determine which are relevant — including INDIRECT relevance through reasoning chains.
 
-Query: \"{query}\"
+Query: "{query}"
 
 Candidate memories:
 {candidate_list}
 
 For each memory, respond with a JSON array:
-[{{\"index\": 1, \"score\": 0.0-1.0, \"reason\": \"brief explanation\"}}]
+[{{"index": 1, "score": 0.0-1.0, "reason": "brief explanation"}}]
 
 Score guidelines:
 - 1.0 = directly answers the query
@@ -157,7 +165,6 @@ Respond with ONLY the JSON array."""
                 if 0 <= idx < len(candidates):
                     candidates[idx]["llm_score"] = ranking["score"]
                     candidates[idx]["chain_reason"] = ranking.get("reason", "")
-                    # Final score: blend of vector similarity and LLM reasoning
                     candidates[idx]["final_score"] = (
                         candidates[idx].get("vector_sim", 0) * 0.3 +
                         ranking["score"] * 0.7
@@ -167,7 +174,7 @@ Respond with ONLY the JSON array."""
             return candidates[:top_k]
 
         except Exception as e:
-            # Fallback: return by vector similarity
+            logger.warning(f"LLM rerank failed, falling back to vector: {e}")
             candidates.sort(key=lambda x: x.get("vector_sim", 0), reverse=True)
             return candidates[:top_k]
 
@@ -187,18 +194,18 @@ Respond with ONLY the JSON array."""
 
         Returns:
             {
-                \"connections\": [...],  # ranked results with chain reasoning
-                \"chains_found\": int,   # how many indirect connections found
-                \"query\": str,
-                \"latency_ms\": float,
-                \"tokens_used\": int     # approximate
+                "connections": [...],  # ranked results with chain reasoning
+                "chains_found": int,   # how many indirect connections found
+                "query": str,
+                "latency_ms": float,
+                "tokens_used": int     # approximate
             }
         """
         start = time.time()
 
         if not memories:
             return {"connections": [], "chains_found": 0, "query": query,
-                    "latency_ms": 0, "tokens_used": 0}
+                    "latency_ms": 0, "approx_tokens": 0}
 
         # 1. Embed everything
         all_texts = memories + [query]
@@ -246,7 +253,13 @@ Respond with ONLY the JSON array."""
         connections = []
         chains_found = 0
         for r in reranked:
-            is_chain = r.get("source") == "neighbor" and r.get("llm_score", 0) > 0.5
+            # A result is a "chain" if it was found via neighbor expansion,
+            # OR if the LLM scored it highly but vector similarity was low
+            # (meaning the LLM found an indirect connection)
+            is_neighbor = r.get("source") == "neighbor"
+            llm_high = r.get("llm_score", 0) > 0.5
+            vector_low = r.get("vector_sim", 0) < 0.3
+            is_chain = (is_neighbor and llm_high) or (llm_high and vector_low)
             if is_chain:
                 chains_found += 1
 

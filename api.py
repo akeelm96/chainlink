@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from engine import ChainEngine
+from chainlink_memory.engine import ChainEngine
 
 # --- App ---
 app = FastAPI(

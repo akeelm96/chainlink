@@ -3,32 +3,19 @@ ChainLink SDK
 =============
 The simplest way to add chain-aware memory to any AI agent.
 
-This is what AI coding assistants (Claude Code, Cursor, Codex) will generate
-when a vibe coder says "add memory to my app" or "make my agent remember things."
-
 Usage:
-    from chainlink.sdk import ChainLink
+    from chainlink_memory import ChainLink
 
     memory = ChainLink()
-
-    # Store memories
     memory.add("User loves Thai food")
     memory.add("User has a severe shellfish allergy")
     memory.add("Thai curries often contain shrimp paste")
 
-    # Query — finds chains vector search misses
     results = memory.query("plan Friday dinner")
     for r in results:
         print(f"[{r.score}] {r.text}")
         if r.is_chain:
             print(f"  Chain: {r.reason}")
-
-    # Output:
-    # [0.95] User loves Thai food
-    # [0.91] Thai curries often contain shrimp paste
-    #   Chain: Thai food contains shrimp paste, dangerous for shellfish allergy
-    # [0.88] User has a severe shellfish allergy
-    #   Chain: Shellfish allergy is directly relevant to Thai food dinner plan
 """
 
 import json
@@ -88,7 +75,7 @@ class ChainLink:
         persist_path: Optional[str] = None,
         model: str = "claude-haiku-4-5-20251001",
     ):
-        from engine import ChainEngine
+        from chainlink_memory.engine import ChainEngine
         self._engine = ChainEngine(
             anthropic_api_key=api_key,
             model=model,
@@ -107,14 +94,10 @@ class ChainLink:
 
         Args:
             text: The memory text to store
-            metadata: Optional key-value metadata (e.g. {"source": "chat", "user": "alice"})
+            metadata: Optional key-value metadata
 
         Returns:
             Memory ID (int)
-
-        Example:
-            memory.add("User prefers window seats on flights")
-            memory.add("Meeting with Bob at 3pm", metadata={"type": "calendar"})
         """
         mem = Memory(
             text=text,
@@ -130,26 +113,12 @@ class ChainLink:
         return mem.id
 
     def add_many(self, texts: List[str]) -> List[int]:
-        """
-        Store multiple memories at once. Returns list of memory IDs.
-
-        Example:
-            ids = memory.add_many([
-                "User loves Thai food",
-                "User has shellfish allergy",
-                "Thai curries use shrimp paste",
-            ])
-        """
+        """Store multiple memories at once. Returns list of memory IDs."""
         return [self.add(text) for text in texts]
 
     def query(self, query: str, top_k: int = 5) -> List[QueryResult]:
         """
         Find relevant memories including chain connections.
-
-        This is the core value — it finds connections that vector search misses.
-        For example, if you query "plan Friday dinner" and have memories about
-        Thai food, shrimp paste, and shellfish allergy, it will connect the chain:
-        Thai dinner -> shrimp paste -> shellfish allergy.
 
         Args:
             query: What to search for
@@ -157,13 +126,6 @@ class ChainLink:
 
         Returns:
             List of QueryResult with text, score, reason, and is_chain flag
-
-        Example:
-            results = memory.query("anything to worry about for Friday?")
-            for r in results:
-                print(f"[{r.score}] {r.text}")
-                if r.is_chain:
-                    print(f"  Chain reason: {r.reason}")
         """
         if not self._memories:
             return []
@@ -187,7 +149,7 @@ class ChainLink:
         ]
 
     def search(self, query: str, top_k: int = 5) -> List[QueryResult]:
-        """Alias for query() — some people prefer 'search'."""
+        """Alias for query()."""
         return self.query(query, top_k=top_k)
 
     def get_all(self) -> List[Memory]:
@@ -199,13 +161,7 @@ class ChainLink:
         return len(self._memories)
 
     def remove(self, memory_id: int) -> bool:
-        """
-        Remove a memory by ID. Returns True if found and removed.
-
-        Example:
-            mid = memory.add("temporary note")
-            memory.remove(mid)
-        """
+        """Remove a memory by ID. Returns True if found and removed."""
         before = len(self._memories)
         self._memories = [m for m in self._memories if m.id != memory_id]
         removed = len(self._memories) < before
@@ -225,6 +181,7 @@ class ChainLink:
 
     def _save(self):
         """Save memories to disk as JSON."""
+        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "next_id": self._next_id,
             "memories": [

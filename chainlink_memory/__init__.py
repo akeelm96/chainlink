@@ -16,6 +16,7 @@ Quick start:
 """
 
 from chainlink_memory.sdk import ChainLink, QueryResult, Memory
+from chainlink_memory.usage import UsageTracker
 
-__version__ = "0.1.0"
-__all__ = ["ChainLink", "QueryResult", "Memory"]
+__version__ = "0.2.0"
+__all__ = ["ChainLink", "QueryResult", "Memory", "UsageTracker"]

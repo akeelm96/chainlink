@@ -22,6 +22,14 @@ setup(
             "uvicorn==0.30.0",
             "pydantic>=2.0.0",
         ],
+        "mcp": [
+            "mcp>=1.0.0",
+        ],
+    },
+    entry_points={
+        "console_scripts": [
+            "chainlink-mcp=chainlink.mcp_server:cli_entry",
+        ],
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -35,5 +43,5 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
-    keywords="ai memory agent chain reasoning vector search rag llm",
+    keywords="ai memory agent chain reasoning vector search rag llm mcp",
 )

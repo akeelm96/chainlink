@@ -62,7 +62,7 @@ Create a memory store with chain reasoning.
 - `persist_path`: Save memories to disk as JSON (optional)
 - `model`: LLM model for chain reasoning
 
-### `memory.add(text, metadata=None) -> int`
+### `memory.add(text, metadata=None) → int`
 
 Store a memory. Returns the memory ID.
 
@@ -71,7 +71,7 @@ memory.add("User prefers window seats")
 memory.add("Meeting at 3pm", metadata={"type": "calendar"})
 ```
 
-### `memory.add_many(texts) -> List[int]`
+### `memory.add_many(texts) → List[int]`
 
 Store multiple memories at once.
 
@@ -79,7 +79,7 @@ Store multiple memories at once.
 memory.add_many(["fact 1", "fact 2", "fact 3"])
 ```
 
-### `memory.query(query, top_k=5) -> List[QueryResult]`
+### `memory.query(query, top_k=5) → List[QueryResult]`
 
 Find relevant memories including chain connections.
 
@@ -115,6 +115,49 @@ memory.add("remembers across restarts")
 5. **Returns** ranked results with explanations
 
 The neighborhood expansion step is what makes it work. When you search for "Friday dinner", vector search finds "Thai restaurant on Friday". Neighborhood expansion then finds "shrimp paste" because it's close to "Thai restaurant" in embedding space — even though "shrimp paste" is invisible to the original query.
+
+## MCP Server (for Claude Code, Cursor, Codex)
+
+ChainLink ships as an MCP server — AI coding assistants can use it as a native tool without any code.
+
+**Install:**
+```bash
+pip install chainlink-memory[mcp]
+```
+
+**Add to Claude Code** (`~/.claude/claude_desktop_config.json`):
+```json
+{
+    "mcpServers": {
+        "chainlink": {
+            "command": "chainlink-mcp",
+            "env": {"ANTHROPIC_API_KEY": "sk-ant-..."}
+        }
+    }
+}
+```
+
+**Add to Cursor** (`.cursor/mcp.json`):
+```json
+{
+    "mcpServers": {
+        "chainlink": {
+            "command": "chainlink-mcp",
+            "env": {"ANTHROPIC_API_KEY": "sk-ant-..."}
+        }
+    }
+}
+```
+
+Once configured, AI assistants get these tools automatically:
+- `store_memory` — Save a fact, preference, or context
+- `query_memory` — Search with chain reasoning (finds connections vector search misses)
+- `store_memories` — Batch store multiple memories
+- `list_memories` — View all stored memories
+- `remove_memory` — Delete a memory by ID
+- `memory_stats` — Check memory count and status
+
+Memories persist to `~/.chainlink/memories.json` by default (configurable via `CHAINLINK_PERSIST_PATH` env var).
 
 ## Self-Hosted API Server
 
